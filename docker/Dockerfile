@@ -1,4 +1,5 @@
-FROM alpine:3.10 AS builder
+FROM alpine:3.10.3 AS base
+FROM base AS builder
 LABEL maintainer="k@ndk.name"
 
 ARG BUILD_DEPENDENCIES="build-base \
@@ -17,19 +18,22 @@ ENV LC_ALL=en_US.UTF-8 \
     FLASK_APP=/build/powerdnsadmin/__init__.py
 
 # Get dependencies
-RUN apk add --no-cache ${BUILD_DEPENDENCIES} && \
+RUN apk add --no-cache --update ${BUILD_DEPENDENCIES} && \
     ln -s /usr/bin/pip3 /usr/bin/pip
 
 WORKDIR /build
 
-# We copy just the requirements.txt first to leverage Docker cache
-COPY ./requirements.txt /build/requirements.txt
-
-# Get application dependencies
-RUN pip install -r requirements.txt
-
 # Add sources
 COPY . /build
+
+# Install python building wheel tools
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Build application dependencies
+RUN python3 -m pip wheel --wheel-dir=/python_dependencies --no-cache-dir --requirement /build/requirements.txt && \
+
+# Install wheel to build flask stuff
+RUN python3 -m pip install --no-cache-dir --no-index --find-links=/python_dependencies --requirement /build/requirements.txt
 
 # Prepare assets
 RUN yarn install --pure-lockfile --production && \
@@ -59,26 +63,25 @@ RUN mkdir -p /app && \
     mkdir -p /app/configs && \
     cp -r /build/configs/docker_config.py /app/configs
 
-# Cleanup
-RUN pip install pip-autoremove && \
-    pip-autoremove cssmin -y && \
-    pip-autoremove jsmin -y && \
-    pip-autoremove pytest -y && \
-    pip uninstall -y pip-autoremove && \
-    apk del ${BUILD_DEPENDENCIES}
-
-
 # Build image
-FROM alpine:3.10
+FROM base
 
 ENV FLASK_APP=/app/powerdnsadmin/__init__.py
 
-RUN apk add --no-cache mariadb-connector-c postgresql-client py3-gunicorn py3-psycopg2 xmlsec && \
-    addgroup -S pda && \
-    adduser -S -D -G pda pda
+COPY --from=builder /python_dependencies /python_dependencies
+COPY --from=builder /build/requirements.txt /build/requirements.txt
 
-COPY --from=builder /usr/bin/flask /usr/bin/
-COPY --from=builder /usr/lib/python3.7/site-packages /usr/lib/python3.7/site-packages/
+RUN apk add --no-cache --update \
+      mariadb-connector-c \
+      postgresql-client \
+      py3-gunicorn \
+      py3-psycopg2 \
+      xmlsec && \
+    addgroup -S pda && \
+    adduser -S -D -G pda pda && \
+    python3 -m pip install --no-cache-dir --no-index --find-links=/python_dependencies --requirement /build/requirements.txt && \
+    rm -fR /python_dependencies /requirements.txt
+
 COPY --from=builder --chown=pda:pda /app /app/
 COPY ./docker/entrypoint.sh /usr/bin/
 
