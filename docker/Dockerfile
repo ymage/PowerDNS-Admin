@@ -29,11 +29,14 @@ COPY . /build
 # Install python building wheel tools
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Build application dependencies
-RUN python3 -m pip wheel --wheel-dir=/python_dependencies --no-cache-dir --requirement /build/requirements.txt && \
+# Install application dependencies
+RUN python3 -m pip install --no-cache-dir --upgrade --requirement /build/requirements.txt
 
-# Install wheel to build flask stuff
-RUN python3 -m pip install --no-cache-dir --no-index --find-links=/python_dependencies --requirement /build/requirements.txt
+# Build application dependencies
+RUN sed -i '/cssmin/d' /build/requirements.txt && \
+    sed -i '/jsmin/d' /build/requirements.txt && \
+    sed -i '/pytest/d' /build/requirements.txt && \
+    python3 -m pip wheel --wheel-dir=/python_dependencies --no-cache-dir --requirement /build/requirements.txt
 
 # Prepare assets
 RUN yarn install --pure-lockfile --production && \
